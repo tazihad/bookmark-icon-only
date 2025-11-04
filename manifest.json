@@ -1,5 +1,5 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "Bookmark Icon Only",
   "version": "1.0.0",
   "description": "Show selected bookmarks as icons only",
@@ -9,7 +9,8 @@
     "menus"
   ],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": ["background.js"],
+    "service_worker": "background.js"
   },
   "icons": {
     "48": "icons/icon-48.png",

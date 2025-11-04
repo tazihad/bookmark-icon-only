@@ -1,19 +1,40 @@
-// Store icon-only bookmarks
-let iconOnlyBookmarks = [];
+// Function to create context menus
+function createMenus() {
+  // Remove existing menus to avoid duplicates
+  browser.menus.remove("show-icon-only");
+  browser.menus.remove("show-full-bookmark");
+  
+  // Create "Show icon only" menu
+  browser.menus.create({
+    id: "show-icon-only",
+    title: "Show icon only",
+    contexts: ["bookmark"]
+  });
+  
+  // Create "Show full bookmark" menu
+  browser.menus.create({
+    id: "show-full-bookmark",
+    title: "Show full bookmark",
+    contexts: ["bookmark"]
+  });
+  
+  console.log("Context menus created.");
+}
 
-// Load saved bookmarks on startup
-browser.storage.local.get("iconOnlyBookmarks").then((result) => {
-  iconOnlyBookmarks = result.iconOnlyBookmarks || [];
-  console.log("Loaded icon-only bookmarks:", iconOnlyBookmarks);
-});
+// Create menus on extension install/update
+browser.runtime.onInstalled.addListener(createMenus);
 
-// Create context menu for "Show icon only"
-browser.menus.create({
-  id: "show-icon-only",
-  title: "Show icon only",
-  contexts: ["bookmark"],
-  onclick: async (info) => {
-    if (!info.bookmarkId) return;
+// Recreate menus on browser startup (for persistence in MV3)
+browser.runtime.onStartup.addListener(createMenus);
+
+// Handle menu clicks
+browser.menus.onClicked.addListener(async (info, tab) => {
+  if (!info.bookmarkId) return;
+  
+  if (info.menuItemId === "show-icon-only") {
+    // Reload from storage to ensure latest state (service worker may restart)
+    const result = await browser.storage.local.get("iconOnlyBookmarks");
+    let iconOnlyBookmarks = result.iconOnlyBookmarks || [];
     
     // Add to icon-only list
     if (!iconOnlyBookmarks.includes(info.bookmarkId)) {
@@ -37,16 +58,10 @@ browser.menus.create({
       titles[info.bookmarkId] = bookmark[0].title;
       await browser.storage.local.set({ originalTitles: titles });
     }
-  }
-});
-
-// Create context menu for "Show full bookmark"
-browser.menus.create({
-  id: "show-full-bookmark",
-  title: "Show full bookmark",
-  contexts: ["bookmark"],
-  onclick: async (info) => {
-    if (!info.bookmarkId) return;
+  } else if (info.menuItemId === "show-full-bookmark") {
+    // Reload from storage to ensure latest state (service worker may restart)
+    const result = await browser.storage.local.get("iconOnlyBookmarks");
+    let iconOnlyBookmarks = result.iconOnlyBookmarks || [];
     
     // Remove from icon-only list
     iconOnlyBookmarks = iconOnlyBookmarks.filter(id => id !== info.bookmarkId);
@@ -72,6 +87,10 @@ browser.menus.create({
 
 // Clean up when bookmark is deleted
 browser.bookmarks.onRemoved.addListener(async (bookmarkId) => {
+  // Reload from storage to ensure latest state
+  const result = await browser.storage.local.get("iconOnlyBookmarks");
+  let iconOnlyBookmarks = result.iconOnlyBookmarks || [];
+  
   if (iconOnlyBookmarks.includes(bookmarkId)) {
     iconOnlyBookmarks = iconOnlyBookmarks.filter(id => id !== bookmarkId);
     await browser.storage.local.set({ iconOnlyBookmarks: iconOnlyBookmarks });
