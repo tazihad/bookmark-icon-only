@@ -1,0 +1,24 @@
+{
+  "manifest_version": 2,
+  "name": "Bookmark Icon Only",
+  "version": "1.0.0",
+  "description": "Show selected bookmarks as icons only in the toolbar",
+  "permissions": [
+    "bookmarks",
+    "storage",
+    "menus"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "icons": {
+    "48": "icon.png",
+    "96": "icon.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bookmark-icon-only@yourdomain.com",
+      "strict_min_version": "78.0"
+    }
+  }
+}
