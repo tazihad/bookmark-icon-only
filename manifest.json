@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Bookmark Icon Only",
   "version": "1.0.0",
-  "description": "Show selected bookmarks as icons only in the toolbar",
+  "description": "Show selected bookmarks as icons only",
   "permissions": [
     "bookmarks",
     "storage",
