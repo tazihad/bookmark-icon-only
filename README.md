@@ -1,4 +1,4 @@
-# icon-only-bookmarks
+# Bookmark Icon Only
 Icon only bookmarks extension for firefox.
 
 ## Install
