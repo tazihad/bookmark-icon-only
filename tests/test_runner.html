@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Bookmark Icon Only Tests</title>
+</head>
+<body>
+  <h1>Running Tests...</h1>
+  <div id="output"></div>
+  <script src="../db.js"></script>
+  <script>
+    function log(msg) {
+      console.log(msg);
+      const d = document.createElement("div");
+      d.textContent = msg;
+      document.getElementById("output").appendChild(d);
+    }
+
+    function createMockBrowser() {
+      const localStorageMap = new Map();
+      const syncStorageMap = new Map();
+      const bookmarksMap = new Map();
+      const SYNC_ITEM_LIMIT = 8192;
+
+      return {
+        _bookmarksMap: bookmarksMap,
+        _localStorageMap: localStorageMap,
+        _syncStorageMap: syncStorageMap,
+
+        storage: {
+          local: {
+            async get(keys) {
+              if (keys === null) {
+                const out = {};
+                for (const [k, v] of localStorageMap.entries()) out[k] = JSON.parse(JSON.stringify(v));
+                return out;
+              }
+              if (Array.isArray(keys)) {
+                const out = {};
+                for (const k of keys) {
+                  if (localStorageMap.has(k)) out[k] = JSON.parse(JSON.stringify(localStorageMap.get(k)));
+                }
+                return out;
+              }
+              if (typeof keys === "string") {
+                const out = {};
+                if (localStorageMap.has(keys)) out[keys] = JSON.parse(JSON.stringify(localStorageMap.get(keys)));
+                return out;
+              }
+              return {};
+            },
+            async set(obj) {
+              for (const [k, v] of Object.entries(obj)) {
+                localStorageMap.set(k, JSON.parse(JSON.stringify(v)));
+              }
+            },
+            async remove(keys) {
+              const list = Array.isArray(keys) ? keys : [keys];
+              for (const k of list) localStorageMap.delete(k);
+            }
+          },
+
+          sync: {
+            async get(keys) {
+              if (keys === null) {
+                const out = {};
+                for (const [k, v] of syncStorageMap.entries()) out[k] = JSON.parse(JSON.stringify(v));
+                return out;
+              }
+              if (Array.isArray(keys)) {
+                const out = {};
+                for (const k of keys) {
+                  if (syncStorageMap.has(k)) out[k] = JSON.parse(JSON.stringify(syncStorageMap.get(k)));
+                }
+                return out;
+              }
+              if (typeof keys === "string") {
+                const out = {};
+                if (syncStorageMap.has(keys)) out[keys] = JSON.parse(JSON.stringify(syncStorageMap.get(keys)));
+                return out;
+              }
+              return {};
+            },
+            async set(obj) {
+              for (const [k, v] of Object.entries(obj)) {
+                const serialized = JSON.stringify(v);
+                if (serialized.length > SYNC_ITEM_LIMIT) {
+                  throw new Error(`QuotaExceededError: Item '${k}' exceeds 8192 bytes (${serialized.length} bytes)`);
+                }
+                syncStorageMap.set(k, JSON.parse(serialized));
+              }
+            },
+            async remove(keys) {
+              const list = Array.isArray(keys) ? keys : [keys];
+              for (const k of list) syncStorageMap.delete(k);
+            }
+          }
+        },
+
+        bookmarks: {
+          failNextUpdate: false,
+          async get(id) {
+            if (!bookmarksMap.has(id)) return [];
+            return [JSON.parse(JSON.stringify(bookmarksMap.get(id)))];
+          },
+          async update(id, changes) {
+            if (this.failNextUpdate) {
+              this.failNextUpdate = false;
+              throw new Error("Simulated Firefox Bookmarks update failure");
+            }
+            if (!bookmarksMap.has(id)) throw new Error("Bookmark not found");
+            const bm = bookmarksMap.get(id);
+            if (changes.title !== undefined) bm.title = changes.title;
+            if (changes.url !== undefined) bm.url = changes.url;
+            bookmarksMap.set(id, bm);
+            return bm;
+          }
+        },
+
+        menus: {
+          items: new Map(),
+          async removeAll() { this.items.clear(); },
+          create(spec) { this.items.set(spec.id, spec); },
+          async update(id, updates) {
+            if (this.items.has(id)) Object.assign(this.items.get(id), updates);
+          },
+          async refresh() {}
+        }
+      };
+    }
+
+    function assert(cond, msg) {
+      if (!cond) throw new Error("Assertion Failed: " + msg);
+    }
+    assert.strictEqual = function(a, b, msg) {
+      if (a !== b) throw new Error(`Assertion Failed: ${a} !== ${b} (${msg || ""})`);
+    };
+
+    async function runAll() {
+      try {
+        log("=== Running Browser Environment Tests ===");
+
+        // Test 1: Init
+        log("[Test 1] Initialization with empty storage...");
+        window.browser = createMockBrowser();
+        let db = new BookmarkDatabase();
+        await db.init();
+        assert.strictEqual(db.count, 0, "DB should start with 0 records");
+        assert.strictEqual(db.isIconOnly("bm1"), false);
+        log("✓ Test 1 Passed");
+
+        // Test 2: Migration
+        log("[Test 2] Legacy v1 migration...");
+        window.browser = createMockBrowser();
+        await browser.storage.sync.set({
+          originalTitles: {
+            "leg1": "Google Search",
+            "leg2": "GitHub: Let's build from here"
+          },
+          iconOnlyBookmarks: ["leg1", "leg2"]
+        });
+        db = new BookmarkDatabase();
+        await db.init();
+        assert.strictEqual(db.count, 2, "Should have 2 migrated records");
+        assert.strictEqual(db.isIconOnly("leg1"), true);
+        assert.strictEqual(db.get("leg1").originalTitle, "Google Search");
+        const checkMirror = await browser.storage.sync.get(["originalTitles", "iconOnlyBookmarks"]);
+        assert.strictEqual(checkMirror.originalTitles["leg1"], "Google Search", "1.0.1 mirror should preserve originalTitles");
+        assert(checkMirror.iconOnlyBookmarks.includes("leg1"), "1.0.1 mirror should preserve iconOnlyBookmarks");
+        log("✓ Test 2 Passed: 1.0.1 legacy migrated and two-way mirror active");
+
+        // Test 3: 8KB Quota
+        // Test 3: Chunk-Packed 800 Bookmarks Sync Quota
+        log("[Test 3] Chunk-Packed Sync Quota Test (800 bookmarks)...");
+        window.browser = createMockBrowser();
+        db = new BookmarkDatabase();
+        await db.init();
+        for (let i = 1; i <= 800; i++) {
+          const id = "bm_test_" + i;
+          browser._bookmarksMap.set(id, {
+            id: id,
+            title: "Long Title For Documentation #" + i + " Testing Storage Item Limits",
+            url: "https://example.com/docs/" + i,
+            parentId: "toolbar_____"
+          });
+          await db.hideTitle(id);
+        }
+        assert.strictEqual(db.count, 800);
+        let totalSyncBytes = 0;
+        for (const [key, val] of browser._syncStorageMap.entries()) {
+          const len = JSON.stringify(val).length + key.length;
+          totalSyncBytes += len;
+          assert(len < 8192, `Chunk ${key} exceeds 8192 bytes (size: ${len})`);
+        }
+        assert(totalSyncBytes < 102400, `Total sync bytes ${totalSyncBytes} exceeds 100KB limit`);
+        log(`✓ Test 3 Passed: 800 bookmarks packed into ${browser._syncStorageMap.size} chunks (${totalSyncBytes} bytes, under 100KB)`);
+
+        // Test 4: Atomic Rollback
+        log("[Test 4] Two-Phase Atomic Rollback...");
+        window.browser = createMockBrowser();
+        db = new BookmarkDatabase();
+        await db.init();
+        const failId = "fail_bm";
+        browser._bookmarksMap.set(failId, {
+          id: failId,
+          title: "Precious Title",
+          url: "https://example.com",
+          parentId: "toolbar_____"
+        });
+        browser.bookmarks.failNextUpdate = true;
+        let threw = false;
+        try {
+          await db.hideTitle(failId);
+        } catch (e) {
+          threw = true;
+        }
+        assert(threw, "Should have thrown on bookmark update failure");
+        assert.strictEqual(db.isIconOnly(failId), false, "L1 cache rolled back");
+        assert.strictEqual(browser._bookmarksMap.get(failId).title, "Precious Title", "Title untouched");
+        log("✓ Test 4 Passed: Rollback succeeded");
+
+        // Test 5: Restore & Fallback
+        log("[Test 5] Title Restoration & Fallback...");
+        window.browser = createMockBrowser();
+        db = new BookmarkDatabase();
+        await db.init();
+        const rId = "restore_bm";
+        browser._bookmarksMap.set(rId, {
+          id: rId,
+          title: "My Dashboard",
+          url: "https://dashboard.example.com",
+          parentId: "toolbar_____"
+        });
+        await db.hideTitle(rId);
+        assert.strictEqual(browser._bookmarksMap.get(rId).title, "");
+        const restored = await db.restoreTitle(rId);
+        assert.strictEqual(restored, "My Dashboard");
+        assert.strictEqual(browser._bookmarksMap.get(rId).title, "My Dashboard");
+
+        // Fallback test
+        browser._bookmarksMap.set("fId", { id: "fId", title: "", url: "https://wikipedia.org/wiki/Main_Page" });
+        const fbTitle = await db.restoreTitle("fId");
+        assert(fbTitle.includes("wikipedia.org"), "Derived fallback from URL");
+        log("✓ Test 5 Passed: Restore and fallback succeeded");
+
+        // Test 6: Root Folder Protection
+        log("[Test 6] Root Folder Protection...");
+        assert(db.isProtected("toolbar_____"), "toolbar_____ is protected");
+        assert(db.isProtected("root________"), "root________ is protected");
+        log("✓ Test 6 Passed");
+
+        // Test 7: Bulk Restore All
+        log("[Test 7] Bulk Restore All...");
+        window.browser = createMockBrowser();
+        db = new BookmarkDatabase();
+        await db.init();
+        for (let i = 1; i <= 5; i++) {
+          const id = "b_" + i;
+          browser._bookmarksMap.set(id, { id, title: "Title " + i, url: "https://site.com/" + i });
+          await db.hideTitle(id);
+        }
+        const bResult = await db.restoreAll();
+        assert.strictEqual(bResult.restored, 5);
+        assert.strictEqual(db.count, 0);
+        log("✓ Test 7 Passed: Bulk restore all succeeded");
+
+        // Test 8: External Rename Auto-Healing
+        log("[Test 8] External Rename Auto-Healing...");
+        window.browser = createMockBrowser();
+        db = new BookmarkDatabase();
+        await db.init();
+        const renId = "rename_test";
+        browser._bookmarksMap.set(renId, { id: renId, title: "Original Title", url: "https://example.com" });
+        await db.hideTitle(renId);
+        assert.strictEqual(db.get(renId).originalTitle, "Original Title");
+        browser._bookmarksMap.get(renId).title = "Newly Renamed By User";
+        await db.autoHeal();
+        assert.strictEqual(db.get(renId).originalTitle, "Newly Renamed By User", "Reconciled new title");
+        log("✓ Test 8 Passed: External rename reconciled");
+
+        log("\n======================================");
+        log("🎉 ALL TESTS PASSED SUCCESSFULLY! (8/8)");
+        log("======================================");
+        document.title = "TESTS_PASSED";
+      } catch (err) {
+        log("❌ TEST FAILED: " + err.message + "\n" + err.stack);
+        document.title = "TESTS_FAILED";
+      } finally {
+        fetch("/results", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: document.title, output: document.getElementById("output").innerText })
+        }).catch(() => {});
+      }
+    }
+
+    runAll();
+  </script>
+</body>
+</html>

@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Bookmark Icon Only",
-  "version": "1.0.1",
-  "description": "Show selected bookmarks as icons only",
+  "version": "1.0.2",
+  "description": "Show selected bookmarks as icons only with Microsoft Edge-like toggle and resilient storage",
   "permissions": [
     "bookmarks",
     "storage",
     "menus"
   ],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": ["db.js", "background.js"]
   },
   "icons": {
     "48": "icons/icon-48.png",

@@ -1,0 +1,10 @@
+# Distribution archives
+*.zip
+*.xpi
+
+# Node
+node_modules/
+
+# OS / Temporary
+.DS_Store
+Thumbs.db
